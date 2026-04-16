@@ -30,3 +30,7 @@ export type { AgentBlueprint, OrchestrationResult } from "./factory";
 // LLM Integration
 export { ClaudeReasoner } from "./llm";
 export type { ClaudeReasonerConfig } from "./llm";
+
+// SuperAgent
+export { SuperAgent } from "./super-agent";
+export type { SuperAgentEvent, AgentSpec, AgentPlan } from "./super-agent";

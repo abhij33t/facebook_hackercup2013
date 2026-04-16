@@ -6,11 +6,9 @@
   "types": "dist/index.d.ts",
   "scripts": {
     "build": "tsc",
-    "example": "tsc && node dist/example.js",
-    "example:enterprise": "tsc && node dist/example-enterprise.js",
+    "start": "tsc && node dist/server.js",
     "test": "tsc && node dist/test.js",
-    "test:llm": "tsc && node dist/test.js --llm",
-    "start": "tsc && node dist/server.js"
+    "test:llm": "tsc && node dist/test.js --llm"
   },
   "devDependencies": {
     "@types/node": "^25.6.0",
