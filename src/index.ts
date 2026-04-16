@@ -26,3 +26,7 @@ export type { AgentState, AgentConfig, Reasoner, ReasonerContext } from "./agent
 // Layer 7: Agent Factory
 export { AgentFactory } from "./factory";
 export type { AgentBlueprint, OrchestrationResult } from "./factory";
+
+// LLM Integration
+export { ClaudeReasoner } from "./llm";
+export type { ClaudeReasonerConfig } from "./llm";

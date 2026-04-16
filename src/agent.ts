@@ -191,12 +191,23 @@ export class AgentHarness {
 
     // ── Node: Plan ─────────────────────────────────────────────
     g.addNode("plan", async (state) => {
+      // If this agent already has assigned tasks or available work, skip planning
+      const assigned = self.tasks.list({ status: "pending", assignee: self.id });
+      if (assigned.length > 0) {
+        return { ...state, plan: [] };
+      }
+      const available = self.tasks.next(self.id);
+      if (available) {
+        return { ...state, plan: [] };
+      }
+
+      // No pre-assigned work — ask the reasoner to create a plan
       const context = self.buildReasonerContext(state);
       const plan = await self.reasoner.plan(state.input, context);
 
-      // Register tasks
+      // Register tasks assigned to this agent
       for (const tc of plan) {
-        self.tasks.add(tc);
+        self.tasks.add({ ...tc, assignee: self.id });
       }
 
       return { ...state, plan };
@@ -229,6 +240,14 @@ export class AgentHarness {
 
       if (actionResult.success) {
         self.tasks.complete(task.id, actionResult.output);
+        // Broadcast the result so other agents can use it
+        await self.bus.send({
+          from: self.id,
+          to: "all",
+          type: "broadcast",
+          channel: "results",
+          payload: { taskId: task.id, taskDescription: task.description, result: actionResult.output },
+        });
       } else {
         self.tasks.fail(task.id, actionResult.error ?? "Unknown error");
       }

@@ -122,12 +122,28 @@ export class AgentFactory {
       agents.push(this.createFromBlueprint(name));
     }
 
-    // 2. Register all tasks
-    for (const tc of taskPlan) {
-      this.sharedTasks.add(tc);
+    // 2. Register tasks, assigning each to its corresponding agent (by index).
+    //    Tasks beyond the agent count remain unassigned (first available picks them up).
+    const taskIds: string[] = [];
+    for (let i = 0; i < taskPlan.length; i++) {
+      const assignee = i < agents.length ? agents[i].id : undefined;
+      const task = this.sharedTasks.add({ ...taskPlan[i], assignee });
+      taskIds.push(task.id);
     }
 
-    // 3. Run agents: each agent picks up the next available task assigned to it
+    // 3. Wire up task dependencies using actual IDs.
+    //    taskPlan entries can reference dependencies by index: metadata.depIndices = [0, 1]
+    for (let i = 0; i < taskPlan.length; i++) {
+      const depIndices = taskPlan[i].metadata?.depIndices as number[] | undefined;
+      if (depIndices) {
+        const task = this.sharedTasks.get(taskIds[i]);
+        if (task) {
+          task.dependencies = depIndices.map((idx) => taskIds[idx]);
+        }
+      }
+    }
+
+    // 4. Run agents in sequence — each picks up its assigned task
     const results: Array<{ id: string; name: string; output: string }> = [];
 
     for (const agent of agents) {
@@ -135,7 +151,7 @@ export class AgentFactory {
       results.push({ id: agent.id, name: agent.name, output });
     }
 
-    // 4. Collect results
+    // 5. Collect results
     return {
       agents: results,
       finalOutput: results.map((r) => r.output).join("\n\n"),

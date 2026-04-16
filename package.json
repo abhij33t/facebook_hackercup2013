@@ -7,10 +7,15 @@
   "scripts": {
     "build": "tsc",
     "example": "tsc && node dist/example.js",
-    "example:enterprise": "tsc && node dist/example-enterprise.js"
+    "example:enterprise": "tsc && node dist/example-enterprise.js",
+    "test": "tsc && node dist/test.js",
+    "test:llm": "tsc && node dist/test.js --llm"
   },
   "devDependencies": {
     "@types/node": "^25.6.0",
     "typescript": "^5.4.0"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.89.0"
   }
 }
