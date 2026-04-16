@@ -6,7 +6,8 @@
   "types": "dist/index.d.ts",
   "scripts": {
     "build": "tsc",
-    "example": "tsc && node dist/example.js"
+    "example": "tsc && node dist/example.js",
+    "example:enterprise": "tsc && node dist/example-enterprise.js"
   },
   "devDependencies": {
     "@types/node": "^25.6.0",
