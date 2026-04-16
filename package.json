@@ -9,7 +9,8 @@
     "example": "tsc && node dist/example.js",
     "example:enterprise": "tsc && node dist/example-enterprise.js",
     "test": "tsc && node dist/test.js",
-    "test:llm": "tsc && node dist/test.js --llm"
+    "test:llm": "tsc && node dist/test.js --llm",
+    "start": "tsc && node dist/server.js"
   },
   "devDependencies": {
     "@types/node": "^25.6.0",
