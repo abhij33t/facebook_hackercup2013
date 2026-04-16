@@ -12,14 +12,14 @@
 // ── Working Memory (the "context window") ──────────────────────────
 
 export class WorkingMemory {
-  private slots = new Map<string, unknown>();
+  private slots = new Map<string, string | number | boolean | object>();
   private maxSlots: number;
 
   constructor(maxSlots = 50) {
     this.maxSlots = maxSlots;
   }
 
-  set(key: string, value: unknown): void {
+  set(key: string, value: string | number | boolean | object): void {
     if (this.slots.size >= this.maxSlots && !this.slots.has(key)) {
       // Evict oldest entry (FIFO) — like context window overflow
       const oldest = this.slots.keys().next().value!;
@@ -28,7 +28,7 @@ export class WorkingMemory {
     this.slots.set(key, value);
   }
 
-  get<T = unknown>(key: string): T | undefined {
+  get<T extends string | number | boolean | object = string>(key: string): T | undefined {
     return this.slots.get(key) as T | undefined;
   }
 
@@ -40,7 +40,7 @@ export class WorkingMemory {
     this.slots.clear();
   }
 
-  snapshot(): Record<string, unknown> {
+  snapshot(): { [key: string]: string | number | boolean | object } {
     return Object.fromEntries(this.slots);
   }
 }

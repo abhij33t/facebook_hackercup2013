@@ -24,9 +24,9 @@
 import { SimpleGraph } from "./graph";
 import { START, END } from "./types";
 import { Memory, Episode } from "./memory";
-import { ToolRegistry, ToolResult } from "./tools";
-import { MessageBus, Message } from "./communication";
-import { TaskManager, Task, TaskCreate } from "./tasks";
+import { ToolRegistry, ToolResult, ToolParams, ToolOutput } from "./tools";
+import { MessageBus, Message, MessagePayload } from "./communication";
+import { TaskManager, Task, TaskCreate, TaskResult } from "./tasks";
 
 // ── Agent State (flows through the graph) ──────────────────────────
 
@@ -60,7 +60,7 @@ export interface ReasonerContext {
   input: string;
   perception: string;
   memory: {
-    working: Record<string, unknown>;
+    working: { [key: string]: string | number | boolean | object };
     relevantEpisodes: Episode[];
     relevantFacts: string[];
   };
@@ -150,8 +150,8 @@ export class AgentHarness {
 
   /** Send a message to this agent via the bus. */
   async handleMessage(msg: Message): Promise<void> {
-    const output = await this.run(msg.payload as string);
-    await this.bus.reply(msg, output, this.id);
+    const output = await this.run(msg.payload.asString());
+    await this.bus.reply(msg, MessagePayload.text(output), this.id);
   }
 
   // ── Build the internal graph ───────────────────────────────────
@@ -223,30 +223,23 @@ export class AgentHarness {
       self.tasks.start(task.id, self.id);
       let actionResult: ToolResult;
 
-      // If the task references a tool, execute it
-      const toolName = task.metadata["tool"] as string | undefined;
+      const toolName = task.metadata.tool;
       if (toolName && self.tools.has(toolName)) {
-        const params = (task.metadata["toolParams"] ?? {}) as Record<string, unknown>;
+        const raw = task.metadata.toolParams ?? {};
+        const params = new ToolParams(raw as { [key: string]: string | number | boolean });
         actionResult = await self.tools.execute(toolName, params);
       } else {
-        // Default: the "reasoning" itself is the action
-        actionResult = {
-          tool: "reason",
-          success: true,
-          output: state.reasoning,
-          durationMs: 0,
-        };
+        actionResult = ToolResult.reasoning(state.reasoning);
       }
 
       if (actionResult.success) {
-        self.tasks.complete(task.id, actionResult.output);
-        // Broadcast the result so other agents can use it
+        self.tasks.complete(task.id, new TaskResult(actionResult.output?.toJSON() ?? "done"));
         await self.bus.send({
           from: self.id,
           to: "all",
           type: "broadcast",
           channel: "results",
-          payload: { taskId: task.id, taskDescription: task.description, result: actionResult.output },
+          payload: MessagePayload.json({ taskId: task.id, taskDescription: task.description, result: actionResult.output?.toJSON() }),
         });
       } else {
         self.tasks.fail(task.id, actionResult.error ?? "Unknown error");
@@ -282,7 +275,7 @@ export class AgentHarness {
         to: "human",
         type: "broadcast",
         channel: "escalation",
-        payload: { reason: state.reflection, context: state.input },
+        payload: MessagePayload.json({ reason: state.reflection, context: state.input }),
       });
       return { ...state, output: `[Escalated] ${state.reflection}` };
     });

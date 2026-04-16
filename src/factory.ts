@@ -134,7 +134,7 @@ export class AgentFactory {
     // 3. Wire up task dependencies using actual IDs.
     //    taskPlan entries can reference dependencies by index: metadata.depIndices = [0, 1]
     for (let i = 0; i < taskPlan.length; i++) {
-      const depIndices = taskPlan[i].metadata?.depIndices as number[] | undefined;
+      const depIndices = taskPlan[i].metadata?.depIndices;
       if (depIndices) {
         const task = this.sharedTasks.get(taskIds[i]);
         if (task) {

@@ -14,15 +14,46 @@
  * like scaling model size enables more emergent behavior.
  */
 
-export interface Message {
-  id: string;
-  from: string;
-  to: string;           // agent ID, "human", or channel name
-  type: "request" | "response" | "broadcast" | "human_request" | "human_response";
-  channel: string;
-  payload: unknown;
-  inReplyTo?: string;    // links response to request
-  timestamp: number;
+export type MessageType = "request" | "response" | "broadcast" | "human_request" | "human_response";
+
+/** Typed, validated payload for bus messages. */
+export class MessagePayload {
+  readonly data: string | number | boolean | object;
+
+  constructor(data: string | number | boolean | object) {
+    if (data === null || data === undefined) throw new Error("MessagePayload: data cannot be null/undefined");
+    this.data = data;
+  }
+
+  static text(s: string): MessagePayload { return new MessagePayload(s); }
+  static json(obj: object): MessagePayload { return new MessagePayload(obj); }
+
+  asString(): string { return typeof this.data === "string" ? this.data : JSON.stringify(this.data); }
+  asObject(): object { return typeof this.data === "object" ? this.data : { value: this.data }; }
+  toJSON(): string | number | boolean | object { return this.data; }
+}
+
+/** A message on the communication bus. */
+export class Message {
+  readonly id: string;
+  readonly from: string;
+  readonly to: string;
+  readonly type: MessageType;
+  readonly channel: string;
+  readonly payload: MessagePayload;
+  readonly inReplyTo: string | undefined;
+  readonly timestamp: number;
+
+  constructor(init: { from: string; to: string; type: MessageType; channel: string; payload: MessagePayload; inReplyTo?: string }) {
+    this.id = `msg_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+    this.from = init.from;
+    this.to = init.to;
+    this.type = init.type;
+    this.channel = init.channel;
+    this.payload = init.payload;
+    this.inReplyTo = init.inReplyTo;
+    this.timestamp = Date.now();
+  }
 }
 
 type MessageHandler = (message: Message) => void | Promise<void>;
@@ -47,50 +78,42 @@ export class MessageBus {
   }
 
   /** Send a fire-and-forget message. */
-  async send(msg: Omit<Message, "id" | "timestamp">): Promise<void> {
-    const full: Message = {
-      ...msg,
-      id: `msg_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
-      timestamp: Date.now(),
-    };
-    this.messageLog.push(full);
-    await this.dispatch(full);
+  async send(init: { from: string; to: string; type: MessageType; channel: string; payload: MessagePayload }): Promise<void> {
+    const msg = new Message(init);
+    this.messageLog.push(msg);
+    await this.dispatch(msg);
   }
 
   /** Send a request and wait for a response (with timeout). */
   async request(
-    msg: Omit<Message, "id" | "timestamp" | "type">,
+    init: { from: string; to: string; channel: string; payload: MessagePayload },
     timeoutMs = 30_000
   ): Promise<Message> {
-    const id = `msg_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-    const full: Message = { ...msg, id, type: "request", timestamp: Date.now() };
-    this.messageLog.push(full);
+    const msg = new Message({ ...init, type: "request" });
+    this.messageLog.push(msg);
 
     return new Promise<Message>((resolve, reject) => {
       const timer = setTimeout(() => {
-        this.pendingRequests.delete(id);
-        reject(new Error(`Request ${id} timed out after ${timeoutMs}ms`));
+        this.pendingRequests.delete(msg.id);
+        reject(new Error(`Request ${msg.id} timed out after ${timeoutMs}ms`));
       }, timeoutMs);
-      this.pendingRequests.set(id, { resolve, timer });
-      this.dispatch(full);
+      this.pendingRequests.set(msg.id, { resolve, timer });
+      this.dispatch(msg);
     });
   }
 
   /** Reply to a request. */
-  async reply(original: Message, payload: unknown, from: string): Promise<void> {
-    const response: Message = {
-      id: `msg_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+  async reply(original: Message, payload: MessagePayload, from: string): Promise<void> {
+    const response = new Message({
       from,
       to: original.from,
       type: "response",
       channel: original.channel,
       payload,
       inReplyTo: original.id,
-      timestamp: Date.now(),
-    };
+    });
     this.messageLog.push(response);
 
-    // Resolve pending request if any
     const pending = this.pendingRequests.get(original.id);
     if (pending) {
       clearTimeout(pending.timer);
@@ -100,20 +123,15 @@ export class MessageBus {
     await this.dispatch(response);
   }
 
-  /**
-   * Request human input. Returns a promise that resolves when
-   * a human provides input via `provideHumanInput()`.
-   */
+  /** Request human input. */
   async requestHuman(from: string, question: string): Promise<string> {
-    const msg: Message = {
-      id: `msg_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+    const msg = new Message({
       from,
       to: "human",
       type: "human_request",
       channel: "human",
-      payload: question,
-      timestamp: Date.now(),
-    };
+      payload: MessagePayload.text(question),
+    });
     this.messageLog.push(msg);
     await this.dispatch(msg);
 

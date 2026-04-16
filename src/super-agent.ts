@@ -17,7 +17,8 @@ import Anthropic from "@anthropic-ai/sdk";
 import { AgentHarness } from "./agent";
 import { AgentFactory } from "./factory";
 import { ClaudeReasoner } from "./llm";
-import { ToolDefinition } from "./tools";
+import { ToolDefinition, ToolParams, ToolOutput, ToolParamSchema, ToolResult } from "./tools";
+import { Task } from "./tasks";
 import { MessageBus } from "./communication";
 import { TaskManager } from "./tasks";
 
@@ -57,82 +58,77 @@ const TOOL_POOL: ToolDefinition[] = [
   {
     name: "search",
     description: "Search for information on any topic. Returns multiple source results.",
-    parameters: { query: "The search query" },
-    execute: async (params) => {
-      const q = params.query as string;
-      return {
+    schema: ToolParamSchema.from({ query: "The search query" }),
+    execute: async (params: ToolParams): Promise<ToolOutput> => {
+      const q = params.getString("query");
+      return new ToolOutput({
         results: [
           `[Source 1] Research on "${q}": Key findings indicate significant developments and measurable impact.`,
           `[Source 2] Analysis of "${q}": Industry experts report 35% year-over-year growth and accelerating adoption.`,
           `[Source 3] Report on "${q}": Multiple case studies demonstrate transformative potential with quantifiable outcomes.`,
         ],
-      };
+      });
     },
   },
   {
     name: "calculate",
     description: "Evaluate a mathematical expression. Supports +, -, *, /, parentheses.",
-    parameters: { expression: "A math expression like (7+5)*3 or 100/4+25" },
-    execute: async (params) => {
-      const expr = String(params.expression).replace(/[^0-9+\-*/().  ]/g, "");
+    schema: ToolParamSchema.from({ expression: "A math expression like (7+5)*3" }),
+    execute: async (params: ToolParams): Promise<ToolOutput> => {
+      const expr = params.getString("expression").replace(/[^0-9+\-*/().  ]/g, "");
       try {
         const result = Function(`"use strict"; return (${expr})`)();
-        return { result: Number(result), expression: expr };
+        return new ToolOutput({ result: Number(result), expression: expr });
       } catch {
-        return { error: "Invalid expression", expression: expr };
+        return new ToolOutput({ error: "Invalid expression", expression: expr });
       }
     },
   },
   {
     name: "compose",
     description: "Compose a structured document with a title and body content.",
-    parameters: { title: "Document title", body: "Document body content" },
-    execute: async (params) => ({
-      document: `# ${params.title}\n\n${params.body}`,
-    }),
+    schema: ToolParamSchema.from({ title: "Document title", body: "Document body content" }),
+    execute: async (params: ToolParams): Promise<ToolOutput> =>
+      new ToolOutput({ document: `# ${params.getString("title")}\n\n${params.getString("body")}` }),
   },
   {
     name: "analyze_data",
     description: "Analyze structured data: compute stats, find patterns, summarize.",
-    parameters: { data: "The data to analyze (as JSON string)", question: "What to analyze" },
-    execute: async (params) => {
-      const data = params.data as string;
-      const question = params.question as string;
-      return {
+    schema: ToolParamSchema.from({ data: "The data to analyze", question: "What to analyze" }),
+    execute: async (params: ToolParams): Promise<ToolOutput> => {
+      const data = params.getString("data");
+      const question = params.getString("question");
+      return new ToolOutput({
         analysis: `Analysis of data regarding "${question}":\n- Data points processed: ${data.length} characters\n- Pattern: consistent upward trend observed\n- Confidence: high`,
-      };
+      });
     },
   },
   {
     name: "code_gen",
     description: "Generate code in a specified language for a given task.",
-    parameters: { language: "Programming language", task: "What the code should do" },
-    execute: async (params) => ({
-      code: `// ${params.language} code for: ${params.task}\n// [Generated code placeholder - in production, use code execution tool]`,
-      language: params.language,
-    }),
+    schema: ToolParamSchema.from({ language: "Programming language", task: "What the code should do" }),
+    execute: async (params: ToolParams): Promise<ToolOutput> =>
+      new ToolOutput({ code: `// ${params.getString("language")} code for: ${params.getString("task")}`, language: params.getString("language") }),
   },
   {
     name: "compare",
     description: "Compare two items, options, or approaches and return pros/cons.",
-    parameters: { item_a: "First item", item_b: "Second item", criteria: "Comparison criteria" },
-    execute: async (params) => ({
-      comparison: {
-        item_a: { name: params.item_a, pros: ["established", "well-documented"], cons: ["less flexible"] },
-        item_b: { name: params.item_b, pros: ["more modern", "flexible"], cons: ["less mature"] },
-        recommendation: `Based on "${params.criteria}", both have merits but the choice depends on specific priorities.`,
-      },
-    }),
+    schema: ToolParamSchema.from({ item_a: "First item", item_b: "Second item", criteria: "Comparison criteria" }),
+    execute: async (params: ToolParams): Promise<ToolOutput> =>
+      new ToolOutput({
+        comparison: {
+          item_a: { name: params.getString("item_a"), pros: ["established", "well-documented"], cons: ["less flexible"] },
+          item_b: { name: params.getString("item_b"), pros: ["more modern", "flexible"], cons: ["less mature"] },
+          recommendation: `Based on "${params.getString("criteria")}", both have merits.`,
+        },
+      }),
   },
   {
     name: "verify",
     description: "Verify a claim, answer, or result for correctness.",
-    parameters: { claim: "The claim or answer to verify", evidence: "Supporting evidence" },
-    execute: async (params) => ({
-      verified: true,
-      confidence: 0.85,
-      assessment: `Claim "${(params.claim as string).slice(0, 80)}" is supported by the provided evidence.`,
-    }),
+    schema: ToolParamSchema.from({ claim: "The claim to verify", evidence: "Supporting evidence" }),
+    execute: async (params: ToolParams): Promise<ToolOutput> =>
+      new ToolOutput({ verified: true, confidence: 0.85, assessment: `Claim "${params.getString("claim").slice(0, 80)}" is supported.` }),
   },
 ];
 
@@ -466,7 +462,7 @@ export class SuperAgent {
       const parsed = JSON.parse(cleaned);
       return {
         analysis: String(parsed.analysis ?? ""),
-        agents: (parsed.agents ?? []).map((a: Record<string, unknown>) => ({
+        agents: (parsed.agents ?? []).map((a: { name?: string; role?: string; persona?: string; tools?: string[]; dependsOn?: string[] }) => ({
           name: String(a.name ?? "Agent"),
           role: String(a.role ?? ""),
           persona: String(a.persona ?? "You are a helpful agent."),
@@ -493,14 +489,14 @@ export class SuperAgent {
     }
   }
 
-  private extractStepData(node: string, state: { perception?: string; reasoning?: string; reflection?: string; output?: string; currentTask?: unknown; actionResult?: unknown }): Record<string, unknown> {
+  private extractStepData(node: string, state: { perception?: string; reasoning?: string; reflection?: string; output?: string; currentTask?: Task | null; actionResult?: ToolResult | null }): { [key: string]: string | boolean | object | null } {
     switch (node) {
       case "perceive": return { perception: String(state.perception ?? "").slice(0, 300) };
       case "reason": return { reasoning: String(state.reasoning ?? "").slice(0, 300) };
       case "plan": return { planned: true };
       case "act": return {
-        task: (state.currentTask as Record<string, unknown>)?.description,
-        result: state.actionResult,
+        task: state.currentTask?.description ?? "n/a",
+        result: state.actionResult?.toJSON() ?? null,
       };
       case "reflect": return {
         reflection: String(state.reflection ?? "").slice(0, 300),

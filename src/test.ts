@@ -26,13 +26,13 @@ import { START, END } from "./types";
 import { Memory } from "./memory";
 
 // Layer 3
-import { ToolRegistry } from "./tools";
+import { ToolRegistry, ToolParams, ToolOutput, ToolParamSchema, ToolDefinition } from "./tools";
 
 // Layer 4
-import { MessageBus } from "./communication";
+import { MessageBus, MessagePayload } from "./communication";
 
 // Layer 5
-import { TaskManager } from "./tasks";
+import { TaskManager, TaskMetadata, TaskResult } from "./tasks";
 
 // Layer 6
 import { AgentHarness, Reasoner, ReasonerContext } from "./agent";
@@ -154,12 +154,12 @@ async function unitTests() {
     reg.register({
       name: "add",
       description: "Add two numbers",
-      parameters: { a: "first number", b: "second number" },
-      execute: async (params) => (params.a as number) + (params.b as number),
+      schema: ToolParamSchema.from({ a: "first number", b: "second number" }),
+      execute: async (params: ToolParams) => new ToolOutput({ result: params.getNumber("a") + params.getNumber("b") }),
     });
-    const result = await reg.execute("add", { a: 3, b: 7 });
+    const result = await reg.execute("add", new ToolParams({ a: 3, b: 7 }));
     assert.strictEqual(result.success, true);
-    assert.strictEqual(result.output, 10);
+    assert.strictEqual(result.output?.getNumber("result"), 10);
   });
 
   await test("execute unknown tool returns error", async () => {
@@ -174,7 +174,7 @@ async function unitTests() {
     reg.register({
       name: "boom",
       description: "Always fails",
-      parameters: {},
+      schema: ToolParamSchema.from({}),
       execute: async () => { throw new Error("kaboom"); },
     });
     const result = await reg.execute("boom");
@@ -187,29 +187,28 @@ async function unitTests() {
 
   await test("send and receive on channel", async () => {
     const bus = new MessageBus();
-    const received: unknown[] = [];
+    const received: MessagePayload[] = [];
     bus.subscribe("test-ch", (msg) => { received.push(msg.payload); });
-    await bus.send({ from: "a", to: "b", type: "broadcast", channel: "test-ch", payload: "hello" });
+    await bus.send({ from: "a", to: "b", type: "broadcast", channel: "test-ch", payload: MessagePayload.text("hello") });
     assert.strictEqual(received.length, 1);
-    assert.strictEqual(received[0], "hello");
+    assert.strictEqual(received[0].asString(), "hello");
   });
 
   await test("request/response pattern", async () => {
     const bus = new MessageBus();
-    // Responder auto-replies
     bus.subscribe("work", async (msg) => {
       if (msg.type === "request") {
-        await bus.reply(msg, `done: ${msg.payload}`, "worker");
+        await bus.reply(msg, MessagePayload.text(`done: ${msg.payload.asString()}`), "worker");
       }
     });
-    const response = await bus.request({ from: "boss", to: "worker", channel: "work", payload: "task1" }, 5000);
-    assert.strictEqual(response.payload, "done: task1");
+    const response = await bus.request({ from: "boss", to: "worker", channel: "work", payload: MessagePayload.text("task1") }, 5000);
+    assert.strictEqual(response.payload.asString(), "done: task1");
   });
 
   await test("message history is recorded", async () => {
     const bus = new MessageBus();
-    await bus.send({ from: "a", to: "b", type: "broadcast", channel: "log", payload: 1 });
-    await bus.send({ from: "a", to: "b", type: "broadcast", channel: "log", payload: 2 });
+    await bus.send({ from: "a", to: "b", type: "broadcast", channel: "log", payload: new MessagePayload(1) });
+    await bus.send({ from: "a", to: "b", type: "broadcast", channel: "log", payload: new MessagePayload(2) });
     const history = bus.history("log");
     assert.strictEqual(history.length, 2);
   });
@@ -243,11 +242,10 @@ async function unitTests() {
       { description: "child2" },
     ]);
     tm.start(child1.id);
-    tm.complete(child1.id, "ok");
-    // Parent still pending — child2 not done
+    tm.complete(child1.id, new TaskResult("ok"));
     assert.strictEqual(tm.get(parent.id)?.status, "pending");
     tm.start(child2.id);
-    tm.complete(child2.id, "ok");
+    tm.complete(child2.id, new TaskResult("ok"));
     // Now parent should auto-complete
     assert.strictEqual(tm.get(parent.id)?.status, "completed");
   });
@@ -269,10 +267,10 @@ async function unitTests() {
     const mockReasoner: Reasoner = {
       reason: async () => "I should compute 2+2",
       plan: async () => [
-        { description: "compute", priority: "high", metadata: { tool: "calc", toolParams: { expr: "2+2" } } },
+        { description: "compute", priority: "high", metadata: new TaskMetadata({ tool: "calc", toolParams: { expr: "2+2" } }) },
       ],
       reflect: async (result) => ({
-        reflection: `Got: ${result?.output}`,
+        reflection: `Got: ${result?.output?.toString()}`,
         route: "done" as const,
       }),
     };
@@ -281,8 +279,8 @@ async function unitTests() {
     tools.register({
       name: "calc",
       description: "Calculate",
-      parameters: { expr: "expression" },
-      execute: async (params) => eval(params.expr as string),
+      schema: ToolParamSchema.from({ expr: "expression" }),
+      execute: async (params: ToolParams) => new ToolOutput({ result: eval(params.getString("expr")) }),
     });
 
     const agent = new AgentHarness({
@@ -355,8 +353,8 @@ async function unitTests() {
       tools: [{
         name: "work",
         description: "do work",
-        parameters: {},
-        execute: async () => `result_${++taskCounter}`,
+        schema: ToolParamSchema.from({}),
+        execute: async () => new ToolOutput({ value: `result_${++taskCounter}` }),
       }],
       reasoner: mockReasoner,
     });
@@ -367,15 +365,15 @@ async function unitTests() {
       tools: [{
         name: "work",
         description: "do work",
-        parameters: {},
-        execute: async () => `result_${++taskCounter}`,
+        schema: ToolParamSchema.from({}),
+        execute: async () => new ToolOutput({ value: `result_${++taskCounter}` }),
       }],
       reasoner: mockReasoner,
     });
 
     const result = await factory.orchestrate("do stuff", ["Alpha", "Beta"], [
-      { description: "task A", metadata: { tool: "work" } },
-      { description: "task B", metadata: { tool: "work" } },
+      { description: "task A", metadata: new TaskMetadata({ tool: "work" }) },
+      { description: "task B", metadata: new TaskMetadata({ tool: "work" }) },
     ]);
 
     assert.strictEqual(result.agents.length, 2);
@@ -403,40 +401,37 @@ async function llmTests() {
   const PROBLEM = "A store sells apples for $3 each. Alice buys 7 apples and Bob buys 5 apples. How much did they spend in total?";
 
   // ── Tool: extract numbers from text ──────────────────────────
-  const extractTool = {
+  const extractTool: ToolDefinition = {
     name: "extract_numbers",
     description: "Extract all numbers mentioned in text",
-    parameters: { text: "input text" },
-    execute: async (params: Record<string, unknown>) => {
-      const text = params.text as string;
+    schema: ToolParamSchema.from({ text: "input text" }),
+    execute: async (params: ToolParams): Promise<ToolOutput> => {
+      const text = params.getString("text");
       const nums = text.match(/\d+/g)?.map(Number) ?? [];
-      return { numbers: nums };
+      return new ToolOutput({ numbers: nums });
     },
   };
 
-  // ── Tool: calculate expression ───────────────────────────────
-  const calcTool = {
+  const calcTool: ToolDefinition = {
     name: "calculate",
     description: "Evaluate a math expression and return the numeric result",
-    parameters: { expression: "a math expression like (7+5)*3" },
-    execute: async (params: Record<string, unknown>) => {
-      const expr = String(params.expression);
-      // Safe eval for simple math
+    schema: ToolParamSchema.from({ expression: "a math expression like (7+5)*3" }),
+    execute: async (params: ToolParams): Promise<ToolOutput> => {
+      const expr = params.getString("expression");
       const sanitized = expr.replace(/[^0-9+\-*/().  ]/g, "");
       const result = Function(`"use strict"; return (${sanitized})`)();
-      return { result: Number(result) };
+      return new ToolOutput({ result: Number(result) });
     },
   };
 
-  // ── Tool: verify answer ──────────────────────────────────────
-  const verifyTool = {
+  const verifyTool: ToolDefinition = {
     name: "verify",
     description: "Verify a computed answer against an expected answer",
-    parameters: { computed: "the computed number", expected: "the expected number" },
-    execute: async (params: Record<string, unknown>) => {
-      const computed = Number(params.computed);
-      const expected = Number(params.expected);
-      return { match: computed === expected, computed, expected };
+    schema: ToolParamSchema.from({ computed: "the computed number", expected: "the expected number" }),
+    execute: async (params: ToolParams): Promise<ToolOutput> => {
+      const computed = params.getNumber("computed");
+      const expected = params.getNumber("expected");
+      return new ToolOutput({ match: computed === expected, computed, expected });
     },
   };
 
@@ -551,9 +546,9 @@ async function llmTests() {
     });
 
     const result = await factory2.orchestrate(PROBLEM, ["Parser", "Calculator", "Verifier"], [
-      { description: "Extract numbers from problem", metadata: { tool: "extract_numbers", toolParams: { text: PROBLEM } } },
-      { description: "Calculate total cost: (7+5)*3", metadata: { tool: "calculate", toolParams: { expression: "(7+5)*3" } } },
-      { description: "Verify answer equals 36", metadata: { tool: "verify", toolParams: { computed: 36, expected: EXPECTED_ANSWER } } },
+      { description: "Extract numbers from problem", metadata: new TaskMetadata({ tool: "extract_numbers", toolParams: { text: PROBLEM } }) },
+      { description: "Calculate total cost: (7+5)*3", metadata: new TaskMetadata({ tool: "calculate", toolParams: { expression: "(7+5)*3" } }) },
+      { description: "Verify answer equals 36", metadata: new TaskMetadata({ tool: "verify", toolParams: { computed: 36, expected: EXPECTED_ANSWER } }) },
     ]);
 
     console.log("    Task stats:", result.taskStats);

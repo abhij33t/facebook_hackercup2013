@@ -13,7 +13,7 @@
 
 import Anthropic from "@anthropic-ai/sdk";
 import { Reasoner, ReasonerContext } from "./agent";
-import { TaskCreate } from "./tasks";
+import { TaskCreate, TaskMetadata } from "./tasks";
 import { ToolResult } from "./tools";
 
 export interface ClaudeReasonerConfig {
@@ -201,10 +201,10 @@ export class ClaudeReasoner implements Reasoner {
       const cleaned = text.replace(/```json?\s*/g, "").replace(/```\s*/g, "").trim();
       const parsed = JSON.parse(cleaned);
       if (!Array.isArray(parsed)) return [{ description: text, priority: "medium" }];
-      return parsed.map((item: Record<string, unknown>) => ({
+      return parsed.map((item: { description?: string; task?: string; priority?: string; metadata?: { tool?: string; toolParams?: { [key: string]: string | number | boolean } } }) => ({
         description: String(item.description ?? item.task ?? "unknown task"),
         priority: this.validatePriority(String(item.priority ?? "medium")),
-        metadata: (item.metadata as Record<string, unknown>) ?? {},
+        metadata: new TaskMetadata(item.metadata),
       }));
     } catch {
       // If parsing fails, treat the whole text as a single task
